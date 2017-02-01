@@ -18,19 +18,13 @@
     <ClCompile Include="Med.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="imgui.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="imguiRenderNVG.cpp">
+    <ClCompile Include="MedNuklear.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="imgui.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="imguiRenderNVG.h">
-      <Filter>Header Files</Filter>
+    <ClInclude Include="MedNuklear.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

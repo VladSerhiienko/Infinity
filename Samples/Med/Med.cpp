@@ -1,7 +1,10 @@
 #include <fwk/fwk.h>
 #include <Remotery.h>
-#include "imgui.h"
-#include "imguiRenderNVG.h"
+
+#include "MedNuklear.h"
+
+//#include "imgui.h"
+//#include "imguiRenderNVG.h"
 
 #include <mjson.h>
 
@@ -339,8 +342,8 @@ namespace app
 
         gfx::gpu_timer_init(&gpuTimer);
 
-       	if (!imguiRenderNVGInit("DroidSans.ttf"))
-            assert(0);
+       	//if (!imguiRenderNVGInit("DroidSans.ttf"))
+            //assert(0);
     }
 
     char** files = 0;
@@ -350,7 +353,7 @@ namespace app
         if (files)
             PHYSFS_freeList(files);
 
-        imguiRenderNVGDestroy();
+        //imguiRenderNVGDestroy();
 
         glDeleteBuffers(1, &staticBuffer);
         glDeleteBuffers(1, &materialUBO);
@@ -428,7 +431,7 @@ namespace app
         {
             PROFILER_CPU_TIMESLICE("imguiRenderGLDraw");
             nvgBeginFrame(vg::ctx, gfx::width, gfx::height, 1.0f);
-            imguiRenderNVGDraw();
+            //imguiRenderNVGDraw();
             nvgEndFrame(vg::ctx);
         }
 
@@ -472,10 +475,10 @@ namespace app
 
         if (!ui::mouseIsCaptured())
         {
-            if (ui::mouseIsPressed(SDL_BUTTON_LEFT))
+            /*if (ui::mouseIsPressed(SDL_BUTTON_LEFT))
                 mbut |= IMGUI_MBUT_LEFT;
             if (ui::mouseIsPressed(SDL_BUTTON_RIGHT))
-                mbut |= IMGUI_MBUT_RIGHT;
+                mbut |= IMGUI_MBUT_RIGHT;*/
             if (ui::mouseWasWheelUp())
                 mscroll -= 1;
             if (ui::mouseWasWheelDown())
@@ -483,15 +486,15 @@ namespace app
 
             ui::mouseAbsOffset(&mx, &my);
 
-            imguiBeginFrame(mx,my,mbut,mscroll);
+            //imguiBeginFrame(mx,my,mbut,mscroll);
 
             int x = gfx::width-250-20;
             int y = 10;
-            if (imguiBeginScrollArea("Properties", x+10, y, 250, gfx::height-20, &propScroll))
-                mouseOverMenu = true;
+            //if (imguiBeginScrollArea("Properties", x+10, y, 250, gfx::height-20, &propScroll))
+                //mouseOverMenu = true;
 
-            imguiLabel("Input Mesh");
-            if (imguiButton(meshName))
+            //imguiLabel("Input Mesh");
+            //if (imguiButton(meshName))
             {
                 if (showLevels)
                 {
@@ -506,20 +509,20 @@ namespace app
                     files = PHYSFS_enumerateFiles(curDir);
                 }
             }
-            if (loadingFailed)
-                imguiLabel("Failed to load model");
+            //if (loadingFailed)
+                //imguiLabel("Failed to load model");
 
-            imguiEndScrollArea();
+            //imguiEndScrollArea();
 
             if (showLevels)
             {
-                if (imguiBeginScrollArea("Choose mesh", x-200, y, 200, 450, &levelScroll))
-                    mouseOverMenu = true;
+                //if (imguiBeginScrollArea("Choose mesh", x-200, y, 200, 450, &levelScroll))
+                    //mouseOverMenu = true;
             
                 int selectedItem = -1;
                 if (strcmp(curDir, "/")!=0)
                 {
-                    if (imguiItem(".."))
+                    //if (imguiItem(".."))
                     {
                         size_t len = strlen(curDir);
                         char* sep = strrchr(curDir, '/');
@@ -540,8 +543,8 @@ namespace app
                 }
                 for (int i = 0; files[i]; ++i)
                 {
-                    if (imguiItem(files[i]))
-                        selectedItem = i;
+                    //if (imguiItem(files[i]))
+                        //selectedItem = i;
                 }
             
                 if (selectedItem != -1)
@@ -566,11 +569,11 @@ namespace app
                     }
                 }
     
-                imguiEndScrollArea();
+                //imguiEndScrollArea();
     
             }
 
-		    imguiEndFrame();
+		    //imguiEndFrame();
         }
 
         if (!mouseOverMenu)
