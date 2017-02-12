@@ -1,33 +1,31 @@
 
+//
+// https://github.com/vurtun/nuklear/blob/master/demo/sdl_opengl3/nuklear_sdl_gl3.h
+//
+
 #include <fwk/fwk.h>
 
-#ifndef NK_IMPLEMENTATION
 #define NK_IMPLEMENTATION
-#endif
-
 #include "MedNuklear.h"
 
-NK_API struct nk_context*   nk_fwk_init(void *win);
-NK_API void                 nk_fwk_shutdown(void);
-NK_API void                 nk_fwk_font_stash_begin(struct nk_font_atlas **atlas);
-NK_API void                 nk_fwk_font_stash_end(void);
-NK_API void                 nk_fwk_new_frame(void);
-NK_API void                 nk_fwk_render(enum nk_anti_aliasing, int max_vertex_buffer, int max_element_buffer);
+NK_API struct nk_context* nk_fwk_init(SDL_Window* win);
+NK_API void nk_fwk_font_stash_begin(struct nk_font_atlas** atlas);
+NK_API void nk_fwk_font_stash_end(void);
+NK_API int nk_fwk_handle_event(SDL_Event* evt);
+NK_API void nk_fwk_render(enum nk_anti_aliasing); // , int max_vertex_buffer, int max_element_buffer);
+NK_API void nk_fwk_shutdown(void);
+NK_API void nk_fwk_device_destroy(void);
+NK_API void nk_fwk_device_create(void);
 
-NK_API void                 nk_fwk_device_destroy(void);
-NK_API void                 nk_fwk_device_create(void);
+#include <string.h>
 
-NK_API void                 nk_fwk_char_callback(void *win, unsigned int codepoint);
-NK_API void                 nk_gflw3_scroll_callback(void *win, double xoff, double yoff);
+const size_t max_vertex_buffer = 512 * 1024;
+const size_t max_element_buffer = 128 * 1024;
 
-#ifndef NK_GLFW_TEXT_MAX
-#define NK_GLFW_TEXT_MAX 256
-#endif
-
-struct nk_glfw_device {
+struct nk_fwk_device {
     struct nk_buffer cmds;
     struct nk_draw_null_texture null;
-    GLuint vbo, vao, ebo;
+    GLuint vbo, vao, ebo, ubo;
     GLuint prog;
     GLuint vert_shdr;
     GLuint frag_shdr;
@@ -39,132 +37,91 @@ struct nk_glfw_device {
     GLuint font_tex;
 };
 
-struct nk_glfw_vertex {
+struct nk_fwk_vertex {
     float position[2];
     float uv[2];
     nk_byte col[4];
 };
 
-static struct nk_glfw {
-    void* win;
-    int width, height;
-    int display_width, display_height;
-    struct nk_glfw_device ogl;
+static struct nk_sdl {
+    SDL_Window *win;
+    struct nk_fwk_device ogl;
     struct nk_context ctx;
     struct nk_font_atlas atlas;
-    struct nk_vec2 fb_scale;
-    unsigned int text[NK_GLFW_TEXT_MAX];
-    int text_len;
-    float scroll;
-} glfw;
-
-#ifdef __APPLE__
-#define NK_SHADER_VERSION "#version 150\n"
-#else
-#define NK_SHADER_VERSION "#version 300 es\n"
-#endif
+} sdl;
 
 NK_API void
 nk_fwk_device_create(void)
 {
-    GLint status;
-    static const GLchar *vertex_shader =
-        NK_SHADER_VERSION
-        "uniform mat4 ProjMtx;\n"
-        "in vec2 Position;\n"
-        "in vec2 TexCoord;\n"
-        "in vec4 Color;\n"
-        "out vec2 Frag_UV;\n"
-        "out vec4 Frag_Color;\n"
-        "void main() {\n"
-        "   Frag_UV = TexCoord;\n"
-        "   Frag_Color = Color;\n"
-        "   gl_Position = ProjMtx * vec4(Position.xy, 0, 1);\n"
-        "}\n";
-    static const GLchar *fragment_shader =
-        NK_SHADER_VERSION
-        "precision mediump float;\n"
-        "uniform sampler2D Texture;\n"
-        "in vec2 Frag_UV;\n"
-        "in vec4 Frag_Color;\n"
-        "out vec4 Out_Color;\n"
-        "void main(){\n"
-        "   Out_Color = Frag_Color * texture(Texture, Frag_UV.st);\n"
-        "}\n";
+    struct nk_fwk_device* dev = &sdl.ogl;
+    dev->prog = res::createProgramFromFiles("NK.TexColor.vert", "NK.TexColor.frag");
 
-    struct nk_glfw_device *dev = &glfw.ogl;
-    nk_buffer_init_default(&dev->cmds);
-    dev->prog = glCreateProgram();
-    dev->vert_shdr = glCreateShader(GL_VERTEX_SHADER);
-    dev->frag_shdr = glCreateShader(GL_FRAGMENT_SHADER);
-    glShaderSource(dev->vert_shdr, 1, &vertex_shader, 0);
-    glShaderSource(dev->frag_shdr, 1, &fragment_shader, 0);
-    glCompileShader(dev->vert_shdr);
-    glCompileShader(dev->frag_shdr);
-    glGetShaderiv(dev->vert_shdr, GL_COMPILE_STATUS, &status);
-    assert(status == GL_TRUE);
-    glGetShaderiv(dev->frag_shdr, GL_COMPILE_STATUS, &status);
-    assert(status == GL_TRUE);
-    glAttachShader(dev->prog, dev->vert_shdr);
-    glAttachShader(dev->prog, dev->frag_shdr);
-    glLinkProgram(dev->prog);
-    glGetProgramiv(dev->prog, GL_LINK_STATUS, &status);
-    assert(status == GL_TRUE);
+    dev->uniform_tex = glGetUniformLocation(dev->prog, "u_texColor");
+    dev->uniform_proj = glGetUniformLocation(dev->prog, "u_mvp");
+    dev->attrib_pos = glGetAttribLocation(dev->prog, "a_position");
+    dev->attrib_uv = glGetAttribLocation(dev->prog, "a_texCoords0");
+    dev->attrib_col = glGetAttribLocation(dev->prog, "a_color0");
 
-    dev->uniform_tex = glGetUniformLocation(dev->prog, "Texture");
-    dev->uniform_proj = glGetUniformLocation(dev->prog, "ProjMtx");
-    dev->attrib_pos = glGetAttribLocation(dev->prog, "Position");
-    dev->attrib_uv = glGetAttribLocation(dev->prog, "TexCoord");
-    dev->attrib_col = glGetAttribLocation(dev->prog, "Color");
+    static const gfx::vertex_element_t fmtdesc_nk[] = {
+        { 0, 0, gfx::ATTR_POSITION, GL_FLOAT, 2, GL_FALSE, GL_FALSE },
+        { 0, 15 * 4, gfx::ATTR_UV0, GL_FLOAT, 2, GL_FALSE, GL_FALSE },
+        { 0, 12 * 4, gfx::ATTR_COLOR, GL_UNSIGNED_BYTE, 4, GL_FALSE, GL_TRUE },
+    };
 
-    {
-        /* buffer setup */
-        GLsizei vs = sizeof(struct nk_glfw_vertex);
-        size_t vp = offsetof(struct nk_glfw_vertex, position);
-        size_t vt = offsetof(struct nk_glfw_vertex, uv);
-        size_t vc = offsetof(struct nk_glfw_vertex, col);
+    dev->vao = gfx::createVAO(ARRAY_SIZE(fmtdesc_nk), fmtdesc_nk);
 
-        glCreateBuffers(1, &dev->vbo);
-        glCreateBuffers(1, &dev->ebo);
-        //glGenBuffers(1, &dev->vbo);
-        //glGenBuffers(1, &dev->ebo);
-        glGenVertexArrays(1, &dev->vao);
+    GLuint bb[2];
+    glCreateBuffers(2, bb);
+    // http://stackoverflow.com/questions/36000356/why-use-vertex-buffer-objects-for-dynamic-objects/36004679
+    glNamedBufferStorage(bb[0], max_vertex_buffer, nullptr, GL_MAP_WRITE_BIT );
+    glNamedBufferStorage(bb[1], max_element_buffer, nullptr, GL_MAP_WRITE_BIT );
+    dev->vbo = bb[0];
+    dev->ebo = bb[1];
 
-        glBindVertexArray(dev->vao);
-        glBindBuffer(GL_ARRAY_BUFFER, dev->vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dev->ebo);
+    glCreateBuffers(1, &dev->ubo);
+    glNamedBufferStorage(dev->ubo, 4 * 4 * 4, 0, GL_MAP_WRITE_BIT);
 
-        glEnableVertexAttribArray((GLuint)dev->attrib_pos);
-        glEnableVertexAttribArray((GLuint)dev->attrib_uv);
-        glEnableVertexAttribArray((GLuint)dev->attrib_col);
+    nk_fwk_set_style(&sdl.ctx, NK_THEME_BLACK);
 
-        //glVertexAttribPointer((GLuint)dev->attrib_pos, 2, GL_FLOAT, GL_FALSE, vs, (void*)vp);
-        //glVertexAttribPointer((GLuint)dev->attrib_uv, 2, GL_FLOAT, GL_FALSE, vs, (void*)vt);
-        //glVertexAttribPointer((GLuint)dev->attrib_col, 4, GL_UNSIGNED_BYTE, GL_TRUE, vs, (void*)vc);
-    }
+#include "droidsans.ttf.h"
 
-    //glBindTexture(GL_TEXTURE_2D, 0);
-    glBindBuffer(GL_ARRAY_BUFFER, 0);
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    glBindVertexArray(0);
+    struct nk_font_atlas *atlas;
+    nk_fwk_font_stash_begin( &atlas );
+    auto droid = nk_font_atlas_add_from_memory( atlas, (void *) s_droidSansTtf, sizeof( s_droidSansTtf ), 14, 0 );
+    sdl.ctx.style.font = &droid->handle;
+    nk_fwk_font_stash_end( );
+
+}
+
+/**
+ * From res_util.cpp createSpecialTexture1D
+ * since I have to xp with gl 4.5
+ **/
+GLuint createSpecialTexture2D(GLint internalFormat, GLsizei width, GLsizei height,
+    GLenum format, GLenum type, const GLvoid* pixels)
+{
+    GLuint texture = 0;
+
+    glCreateTextures(GL_TEXTURE_2D, 1, &texture);
+    glTextureStorage2D(texture, 1, internalFormat, width, height);
+    glTextureParameteri(texture, GL_TEXTURE_MAX_LEVEL, 0);
+    glTextureParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTextureParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTextureSubImage2D(texture, 0, 0, 0, width, height, format, type, pixels);
+
+    return texture;
 }
 
 NK_INTERN void
-nk_fwk_device_upload_atlas(const void *image, int width, int height)
+nk_fwk_device_upload_atlas(const void* image, int width, int height)
 {
-    struct nk_glfw_device *dev = &glfw.ogl;
-    //glGenTextures(1, &dev->font_tex);
-    //glBindTexture(GL_TEXTURE_2D, dev->font_tex);
-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-    //glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-    //glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, (GLsizei)width, (GLsizei)height, 0,
-        //GL_RGBA, GL_UNSIGNED_BYTE, image);
+    sdl.ogl.font_tex = createSpecialTexture2D(GL_RGBA, width, height, GL_RGBA, GL_UNSIGNED_BYTE, image);
 }
 
 NK_API void
 nk_fwk_device_destroy(void)
 {
-    struct nk_glfw_device *dev = &glfw.ogl;
+    struct nk_fwk_device *dev = &sdl.ogl;
     glDetachShader(dev->prog, dev->vert_shdr);
     glDetachShader(dev->prog, dev->frag_shdr);
     glDeleteShader(dev->vert_shdr);
@@ -177,19 +134,28 @@ nk_fwk_device_destroy(void)
 }
 
 NK_API void
-nk_fwk_render(enum nk_anti_aliasing AA, int max_vertex_buffer, int max_element_buffer)
+nk_fwk_render(enum nk_anti_aliasing AA) //, int max_vertex_buffer, int max_element_buffer)
 {
-    struct nk_glfw_device *dev = &glfw.ogl;
+    struct nk_fwk_device *dev = &sdl.ogl;
+    int width, height;
+    int display_width, display_height;
+    struct nk_vec2 scale;
     GLfloat ortho[4][4] = {
         {2.0f, 0.0f, 0.0f, 0.0f},
         {0.0f,-2.0f, 0.0f, 0.0f},
         {0.0f, 0.0f,-1.0f, 0.0f},
         {-1.0f,1.0f, 0.0f, 1.0f},
     };
-    ortho[0][0] /= (GLfloat)glfw.width;
-    ortho[1][1] /= (GLfloat)glfw.height;
+    SDL_GetWindowSize(sdl.win, &width, &height);
+    SDL_GL_GetDrawableSize(sdl.win, &display_width, &display_height);
+    ortho[0][0] /= (GLfloat)width;
+    ortho[1][1] /= (GLfloat)height;
+
+    scale.x = (float)display_width/(float)width;
+    scale.y = (float)display_height/(float)height;
 
     /* setup global state */
+    glViewport(0,0,display_width,display_height);
     glEnable(GL_BLEND);
     glBlendEquation(GL_FUNC_ADD);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -200,9 +166,16 @@ nk_fwk_render(enum nk_anti_aliasing AA, int max_vertex_buffer, int max_element_b
 
     /* setup program */
     glUseProgram(dev->prog);
+
+    if (auto ubo_data = glMapNamedBufferRange(dev->ubo, 0, 4 * 4 * 4, GL_MAP_WRITE_BIT)) {
+        mem_copy32((uint32_t*)ubo_data, (uint32_t*)&ortho[0][0], 4 * 4);
+        glUnmapNamedBuffer(dev->ubo);
+    }
+
+    //glBindBufferRange(GL_UNIFORM_BUFFER, dev->uniform_proj, dev->ubo, 0, 4 * 4 * 4);
+
     //glUniform1i(dev->uniform_tex, 0);
     //glUniformMatrix4fv(dev->uniform_proj, 1, GL_FALSE, &ortho[0][0]);
-    glViewport(0,0,(GLsizei)glfw.display_width,(GLsizei)glfw.display_height);
     {
         /* convert from command queue into draw list and draw to screen */
         const struct nk_draw_command *cmd;
@@ -210,29 +183,30 @@ nk_fwk_render(enum nk_anti_aliasing AA, int max_vertex_buffer, int max_element_b
         const nk_draw_index *offset = NULL;
 
         /* allocate vertex and element buffer */
-        glBindVertexArray(dev->vao);
-        glBindBuffer(GL_ARRAY_BUFFER, dev->vbo);
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dev->ebo);
+        //glBindVertexArray(dev->vao);
+        //glBindBuffer(GL_ARRAY_BUFFER, dev->vbo);
+        //glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, dev->ebo);
+        //glBufferData(GL_ARRAY_BUFFER, max_vertex_buffer, NULL, GL_STREAM_DRAW);
+        //glBufferData(GL_ELEMENT_ARRAY_BUFFER, max_element_buffer, NULL, GL_STREAM_DRAW);
 
-        glBufferData(GL_ARRAY_BUFFER, max_vertex_buffer, NULL, GL_STREAM_DRAW);
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, max_element_buffer, NULL, GL_STREAM_DRAW);
-
-        /* load draw vertices & elements directly into vertex + element buffer */
-        //vertices = glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
-        //elements = glMapBuffer(GL_ELEMENT_ARRAY_BUFFER, GL_WRITE_ONLY);
+        /* load vertices/elements directly into vertex/element buffer */
+        vertices = glMapNamedBuffer(dev->vbo, GL_MAP_WRITE_BIT);
+        elements = glMapNamedBuffer(dev->ebo, GL_MAP_WRITE_BIT);
+        //vertices = glMapBufferRange(GL_ARRAY_BUFFER, 0, max_vertex_buffer, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
+        //elements = glMapBufferRange(GL_ELEMENT_ARRAY_BUFFER, 0, max_vertex_buffer, GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
         {
             /* fill convert configuration */
             struct nk_convert_config config;
             static const struct nk_draw_vertex_layout_element vertex_layout[] = {
-                {NK_VERTEX_POSITION, NK_FORMAT_FLOAT, NK_OFFSETOF(struct nk_glfw_vertex, position)},
-                {NK_VERTEX_TEXCOORD, NK_FORMAT_FLOAT, NK_OFFSETOF(struct nk_glfw_vertex, uv)},
-                {NK_VERTEX_COLOR, NK_FORMAT_R8G8B8A8, NK_OFFSETOF(struct nk_glfw_vertex, col)},
+                {NK_VERTEX_POSITION, NK_FORMAT_FLOAT, NK_OFFSETOF(struct nk_fwk_vertex, position)},
+                {NK_VERTEX_TEXCOORD, NK_FORMAT_FLOAT, NK_OFFSETOF(struct nk_fwk_vertex, uv)},
+                {NK_VERTEX_COLOR, NK_FORMAT_R8G8B8A8, NK_OFFSETOF(struct nk_fwk_vertex, col)},
                 {NK_VERTEX_LAYOUT_END}
             };
             NK_MEMSET(&config, 0, sizeof(config));
             config.vertex_layout = vertex_layout;
-            config.vertex_size = sizeof(struct nk_glfw_vertex);
-            config.vertex_alignment = NK_ALIGNOF(struct nk_glfw_vertex);
+            config.vertex_size = sizeof(struct nk_fwk_vertex);
+            config.vertex_alignment = NK_ALIGNOF(struct nk_fwk_vertex);
             config.null = dev->null;
             config.circle_segment_count = 22;
             config.curve_segment_count = 22;
@@ -243,30 +217,28 @@ nk_fwk_render(enum nk_anti_aliasing AA, int max_vertex_buffer, int max_element_b
 
             /* setup buffers to load vertices and elements */
             {struct nk_buffer vbuf, ebuf;
-            nk_buffer_init_fixed(&vbuf, vertices, (size_t)max_vertex_buffer);
-            nk_buffer_init_fixed(&ebuf, elements, (size_t)max_element_buffer);
-            nk_convert(&glfw.ctx, &dev->cmds, &vbuf, &ebuf, &config);}
+            nk_buffer_init_fixed(&vbuf, vertices, (nk_size)max_vertex_buffer);
+            nk_buffer_init_fixed(&ebuf, elements, (nk_size)max_element_buffer);
+            nk_convert(&sdl.ctx, &dev->cmds, &vbuf, &ebuf, &config);}
         }
-        //glUnmapBuffer(GL_ARRAY_BUFFER);
-        //glUnmapBuffer(GL_ELEMENT_ARRAY_BUFFER);
+        glUnmapNamedBuffer(dev->vbo);
+        glUnmapNamedBuffer(dev->ebo);
 
         /* iterate over and execute each draw command */
-        nk_draw_foreach(cmd, &glfw.ctx, &dev->cmds)
-        {
+        nk_draw_foreach(cmd, &sdl.ctx, &dev->cmds) {
             if (!cmd->elem_count) continue;
+            glBindTextures(0, 1, (GLuint*)&cmd->texture.id);
             //glBindTexture(GL_TEXTURE_2D, (GLuint)cmd->texture.id);
-            glScissor(
-                (GLint)(cmd->clip_rect.x * glfw.fb_scale.x),
-                (GLint)((glfw.height - (GLint)(cmd->clip_rect.y + cmd->clip_rect.h)) * glfw.fb_scale.y),
-                (GLint)(cmd->clip_rect.w * glfw.fb_scale.x),
-                (GLint)(cmd->clip_rect.h * glfw.fb_scale.y));
+            glScissor((GLint)(cmd->clip_rect.x * scale.x),
+                (GLint)((height - (GLint)(cmd->clip_rect.y + cmd->clip_rect.h)) * scale.y),
+                (GLint)(cmd->clip_rect.w * scale.x),
+                (GLint)(cmd->clip_rect.h * scale.y));
             glDrawElements(GL_TRIANGLES, (GLsizei)cmd->elem_count, GL_UNSIGNED_SHORT, offset);
             offset += cmd->elem_count;
         }
-        nk_clear(&glfw.ctx);
+        nk_clear(&sdl.ctx);
     }
 
-    /* default OpenGL state */
     glUseProgram(0);
     glBindBuffer(GL_ARRAY_BUFFER, 0);
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
@@ -275,30 +247,15 @@ nk_fwk_render(enum nk_anti_aliasing AA, int max_vertex_buffer, int max_element_b
     glDisable(GL_SCISSOR_TEST);
 }
 
-NK_API void
-nk_fwk_char_callback(void *win, unsigned int codepoint)
-{
-    (void)win;
-    if (glfw.text_len < NK_GLFW_TEXT_MAX)
-        glfw.text[glfw.text_len++] = codepoint;
-}
-
-NK_API void
-nk_gflw3_scroll_callback(void *win, double xoff, double yoff)
-{
-    (void)win; (void)xoff;
-    glfw.scroll += (float)yoff;
-}
-
-NK_INTERN void
+static void
 nk_fwk_clipbard_paste(nk_handle usr, struct nk_text_edit *edit)
 {
-    //const char *text = glfwGetClipboardString(glfw.win);
-    //if (text) nk_textedit_paste(edit, text, nk_strlen(text));
-    //(void)usr;
+    const char *text = SDL_GetClipboardText();
+    if (text) nk_textedit_paste(edit, text, nk_strlen(text));
+    (void)usr;
 }
 
-NK_INTERN void
+static void
 nk_fwk_clipbard_copy(nk_handle usr, const char *text, int len)
 {
     char *str = 0;
@@ -308,122 +265,261 @@ nk_fwk_clipbard_copy(nk_handle usr, const char *text, int len)
     if (!str) return;
     memcpy(str, text, (size_t)len);
     str[len] = '\0';
-    //glfwSetClipboardString(glfw.win, str);
+    SDL_SetClipboardText(str);
     free(str);
 }
 
 NK_API struct nk_context*
-nk_fwk_init(void *win)
+nk_fwk_init(SDL_Window *win)
 {
-    glfw.win = win;
-
-    nk_init_default(&glfw.ctx, 0);
-    glfw.ctx.clip.copy = nk_fwk_clipbard_copy;
-    glfw.ctx.clip.paste = nk_fwk_clipbard_paste;
-    glfw.ctx.clip.userdata = nk_handle_ptr(0);
+    sdl.win = win;
+    nk_init_default(&sdl.ctx, 0);
+    sdl.ctx.clip.copy = nk_fwk_clipbard_copy;
+    sdl.ctx.clip.paste = nk_fwk_clipbard_paste;
+    sdl.ctx.clip.userdata = nk_handle_ptr(0);
     nk_fwk_device_create();
-    return &glfw.ctx;
+    return &sdl.ctx;
 }
 
 NK_API void
 nk_fwk_font_stash_begin(struct nk_font_atlas **atlas)
 {
-    nk_font_atlas_init_default(&glfw.atlas);
-    nk_font_atlas_begin(&glfw.atlas);
-    *atlas = &glfw.atlas;
+    nk_font_atlas_init_default(&sdl.atlas);
+    nk_font_atlas_begin(&sdl.atlas);
+    *atlas = &sdl.atlas;
 }
 
 NK_API void
 nk_fwk_font_stash_end(void)
 {
     const void *image; int w, h;
-    image = nk_font_atlas_bake(&glfw.atlas, &w, &h, NK_FONT_ATLAS_RGBA32);
+    image = nk_font_atlas_bake(&sdl.atlas, &w, &h, NK_FONT_ATLAS_RGBA32);
     nk_fwk_device_upload_atlas(image, w, h);
-    nk_font_atlas_end(&glfw.atlas, nk_handle_id((int)glfw.ogl.font_tex), &glfw.ogl.null);
-    if (glfw.atlas.default_font)
-        nk_style_set_font(&glfw.ctx, &glfw.atlas.default_font->handle);
+    nk_font_atlas_end(&sdl.atlas, nk_handle_id((int)sdl.ogl.font_tex), &sdl.ogl.null);
+    if (sdl.atlas.default_font)
+        nk_style_set_font(&sdl.ctx, &sdl.atlas.default_font->handle);
+
 }
 
-NK_API void
-nk_fwk_new_frame(void)
+NK_API int
+nk_fwk_handle_event(SDL_Event *evt)
 {
-    int i;
-    double x, y;
-    struct nk_context *ctx = &glfw.ctx;
-    //struct GLFWwindow *win = glfw.win;
-
-    //glfwGetWindowSize(win, &glfw.width, &glfw.height);
-    //glfwGetFramebufferSize(win, &glfw.display_width, &glfw.display_height);
-    glfw.fb_scale.x = (float)glfw.display_width/(float)glfw.width;
-    glfw.fb_scale.y = (float)glfw.display_height/(float)glfw.height;
-
-    nk_input_begin(ctx);
-    for (i = 0; i < glfw.text_len; ++i)
-        nk_input_unicode(ctx, glfw.text[i]);
-
-    /* optional grabbing behavior */
-    //if (ctx->input.mouse.grab)
-        //glfwSetInputMode(glfw.win, GLFW_CURSOR, GLFW_CURSOR_HIDDEN);
-    //else if (ctx->input.mouse.ungrab)
-        //glfwSetInputMode(glfw.win, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
-
-    /*nk_input_key(ctx, NK_KEY_DEL, glfwGetKey(win, GLFW_KEY_DELETE) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_ENTER, glfwGetKey(win, GLFW_KEY_ENTER) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_TAB, glfwGetKey(win, GLFW_KEY_TAB) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_BACKSPACE, glfwGetKey(win, GLFW_KEY_BACKSPACE) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_UP, glfwGetKey(win, GLFW_KEY_UP) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_DOWN, glfwGetKey(win, GLFW_KEY_DOWN) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_TEXT_START, glfwGetKey(win, GLFW_KEY_HOME) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_TEXT_END, glfwGetKey(win, GLFW_KEY_END) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_SCROLL_START, glfwGetKey(win, GLFW_KEY_HOME) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_SCROLL_END, glfwGetKey(win, GLFW_KEY_END) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_SCROLL_DOWN, glfwGetKey(win, GLFW_KEY_PAGE_DOWN) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_SCROLL_UP, glfwGetKey(win, GLFW_KEY_PAGE_UP) == GLFW_PRESS);
-    nk_input_key(ctx, NK_KEY_SHIFT, glfwGetKey(win, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS||
-        glfwGetKey(win, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS);
-
-    if (glfwGetKey(win, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS ||
-        glfwGetKey(win, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS) {
-        nk_input_key(ctx, NK_KEY_COPY, glfwGetKey(win, GLFW_KEY_C) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_PASTE, glfwGetKey(win, GLFW_KEY_V) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_CUT, glfwGetKey(win, GLFW_KEY_X) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_UNDO, glfwGetKey(win, GLFW_KEY_Z) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_REDO, glfwGetKey(win, GLFW_KEY_R) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_WORD_LEFT, glfwGetKey(win, GLFW_KEY_LEFT) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_WORD_RIGHT, glfwGetKey(win, GLFW_KEY_RIGHT) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_LINE_START, glfwGetKey(win, GLFW_KEY_B) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_TEXT_LINE_END, glfwGetKey(win, GLFW_KEY_E) == GLFW_PRESS);
-    } else {
-        nk_input_key(ctx, NK_KEY_LEFT, glfwGetKey(win, GLFW_KEY_LEFT) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_RIGHT, glfwGetKey(win, GLFW_KEY_RIGHT) == GLFW_PRESS);
-        nk_input_key(ctx, NK_KEY_COPY, 0);
-        nk_input_key(ctx, NK_KEY_PASTE, 0);
-        nk_input_key(ctx, NK_KEY_CUT, 0);
-        nk_input_key(ctx, NK_KEY_SHIFT, 0);
+    struct nk_context *ctx = &sdl.ctx;
+    if (evt->type == SDL_KEYUP || evt->type == SDL_KEYDOWN) {
+        /* key events */
+        int down = evt->type == SDL_KEYDOWN;
+        const Uint8* state = SDL_GetKeyboardState(0);
+        SDL_Keycode sym = evt->key.keysym.sym;
+        if (sym == SDLK_RSHIFT || sym == SDLK_LSHIFT)
+            nk_input_key(ctx, NK_KEY_SHIFT, down);
+        else if (sym == SDLK_DELETE)
+            nk_input_key(ctx, NK_KEY_DEL, down);
+        else if (sym == SDLK_RETURN)
+            nk_input_key(ctx, NK_KEY_ENTER, down);
+        else if (sym == SDLK_TAB)
+            nk_input_key(ctx, NK_KEY_TAB, down);
+        else if (sym == SDLK_BACKSPACE)
+            nk_input_key(ctx, NK_KEY_BACKSPACE, down);
+        else if (sym == SDLK_HOME) {
+            nk_input_key(ctx, NK_KEY_TEXT_START, down);
+            nk_input_key(ctx, NK_KEY_SCROLL_START, down);
+        } else if (sym == SDLK_END) {
+            nk_input_key(ctx, NK_KEY_TEXT_END, down);
+            nk_input_key(ctx, NK_KEY_SCROLL_END, down);
+        } else if (sym == SDLK_PAGEDOWN) {
+            nk_input_key(ctx, NK_KEY_SCROLL_DOWN, down);
+        } else if (sym == SDLK_PAGEUP) {
+            nk_input_key(ctx, NK_KEY_SCROLL_UP, down);
+        } else if (sym == SDLK_z)
+            nk_input_key(ctx, NK_KEY_TEXT_UNDO, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_r)
+            nk_input_key(ctx, NK_KEY_TEXT_REDO, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_c)
+            nk_input_key(ctx, NK_KEY_COPY, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_v)
+            nk_input_key(ctx, NK_KEY_PASTE, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_x)
+            nk_input_key(ctx, NK_KEY_CUT, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_b)
+            nk_input_key(ctx, NK_KEY_TEXT_LINE_START, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_e)
+            nk_input_key(ctx, NK_KEY_TEXT_LINE_END, down && state[SDL_SCANCODE_LCTRL]);
+        else if (sym == SDLK_UP)
+            nk_input_key(ctx, NK_KEY_UP, down);
+        else if (sym == SDLK_DOWN)
+            nk_input_key(ctx, NK_KEY_DOWN, down);
+        else if (sym == SDLK_LEFT) {
+            if (state[SDL_SCANCODE_LCTRL])
+                nk_input_key(ctx, NK_KEY_TEXT_WORD_LEFT, down);
+            else nk_input_key(ctx, NK_KEY_LEFT, down);
+        } else if (sym == SDLK_RIGHT) {
+            if (state[SDL_SCANCODE_LCTRL])
+                nk_input_key(ctx, NK_KEY_TEXT_WORD_RIGHT, down);
+            else nk_input_key(ctx, NK_KEY_RIGHT, down);
+        } else return 0;
+        return 1;
+    } else if (evt->type == SDL_MOUSEBUTTONDOWN || evt->type == SDL_MOUSEBUTTONUP) {
+        /* mouse button */
+        int down = evt->type == SDL_MOUSEBUTTONDOWN;
+        const int x = evt->button.x, y = evt->button.y;
+        if (evt->button.button == SDL_BUTTON_LEFT)
+            nk_input_button(ctx, NK_BUTTON_LEFT, x, y, down);
+        if (evt->button.button == SDL_BUTTON_MIDDLE)
+            nk_input_button(ctx, NK_BUTTON_MIDDLE, x, y, down);
+        if (evt->button.button == SDL_BUTTON_RIGHT)
+            nk_input_button(ctx, NK_BUTTON_RIGHT, x, y, down);
+        return 1;
+    } else if (evt->type == SDL_MOUSEMOTION) {
+        if (ctx->input.mouse.grabbed) {
+            int x = (int)ctx->input.mouse.prev.x, y = (int)ctx->input.mouse.prev.y;
+            nk_input_motion(ctx, x + evt->motion.xrel, y + evt->motion.yrel);
+        } else nk_input_motion(ctx, evt->motion.x, evt->motion.y);
+        return 1;
+    } else if (evt->type == SDL_TEXTINPUT) {
+        nk_glyph glyph;
+        memcpy(glyph, evt->text.text, NK_UTF_SIZE);
+        nk_input_glyph(ctx, glyph);
+        return 1;
+    } else if (evt->type == SDL_MOUSEWHEEL) {
+        nk_input_scroll(ctx,(float)evt->wheel.y);
+        return 1;
     }
-
-    glfwGetCursorPos(win, &x, &y);
-    nk_input_motion(ctx, (int)x, (int)y);
-    if (ctx->input.mouse.grabbed) {
-        glfwSetCursorPos(glfw.win, ctx->input.mouse.prev.x, ctx->input.mouse.prev.y);
-        ctx->input.mouse.pos.x = ctx->input.mouse.prev.x;
-        ctx->input.mouse.pos.y = ctx->input.mouse.prev.y;
-    }
-
-    nk_input_button(ctx, NK_BUTTON_LEFT, (int)x, (int)y, glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS);
-    nk_input_button(ctx, NK_BUTTON_MIDDLE, (int)x, (int)y, glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_MIDDLE) == GLFW_PRESS);
-    nk_input_button(ctx, NK_BUTTON_RIGHT, (int)x, (int)y, glfwGetMouseButton(win, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS);*/
-    nk_input_scroll(ctx, glfw.scroll);
-    nk_input_end(&glfw.ctx);
-    glfw.text_len = 0;
-    glfw.scroll = 0;
+    return 0;
 }
 
 NK_API
 void nk_fwk_shutdown(void)
 {
-    nk_font_atlas_clear(&glfw.atlas);
-    nk_free(&glfw.ctx);
+    nk_font_atlas_clear(&sdl.atlas);
+    nk_free(&sdl.ctx);
     nk_fwk_device_destroy();
-    memset(&glfw, 0, sizeof(glfw));
+    memset(&sdl, 0, sizeof(sdl));
+}
+
+NK_API void nk_fwk_set_style(struct nk_context* ctx, enum nk_theme theme)
+{
+    struct nk_color table[NK_COLOR_COUNT];
+    if (theme == NK_THEME_WHITE) {
+        table[NK_COLOR_TEXT] = nk_rgba(70, 70, 70, 255);
+        table[NK_COLOR_WINDOW] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_HEADER] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_BORDER] = nk_rgba(0, 0, 0, 255);
+        table[NK_COLOR_BUTTON] = nk_rgba(185, 185, 185, 255);
+        table[NK_COLOR_BUTTON_HOVER] = nk_rgba(170, 170, 170, 255);
+        table[NK_COLOR_BUTTON_ACTIVE] = nk_rgba(160, 160, 160, 255);
+        table[NK_COLOR_TOGGLE] = nk_rgba(150, 150, 150, 255);
+        table[NK_COLOR_TOGGLE_HOVER] = nk_rgba(120, 120, 120, 255);
+        table[NK_COLOR_TOGGLE_CURSOR] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_SELECT] = nk_rgba(190, 190, 190, 255);
+        table[NK_COLOR_SELECT_ACTIVE] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_SLIDER] = nk_rgba(190, 190, 190, 255);
+        table[NK_COLOR_SLIDER_CURSOR] = nk_rgba(80, 80, 80, 255);
+        table[NK_COLOR_SLIDER_CURSOR_HOVER] = nk_rgba(70, 70, 70, 255);
+        table[NK_COLOR_SLIDER_CURSOR_ACTIVE] = nk_rgba(60, 60, 60, 255);
+        table[NK_COLOR_PROPERTY] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_EDIT] = nk_rgba(150, 150, 150, 255);
+        table[NK_COLOR_EDIT_CURSOR] = nk_rgba(0, 0, 0, 255);
+        table[NK_COLOR_COMBO] = nk_rgba(175, 175, 175, 255);
+        table[NK_COLOR_CHART] = nk_rgba(160, 160, 160, 255);
+        table[NK_COLOR_CHART_COLOR] = nk_rgba(45, 45, 45, 255);
+        table[NK_COLOR_CHART_COLOR_HIGHLIGHT] = nk_rgba(255, 0, 0, 255);
+        table[NK_COLOR_SCROLLBAR] = nk_rgba(180, 180, 180, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR] = nk_rgba(140, 140, 140, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_HOVER] = nk_rgba(150, 150, 150, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_ACTIVE] = nk_rgba(160, 160, 160, 255);
+        table[NK_COLOR_TAB_HEADER] = nk_rgba(180, 180, 180, 255);
+        nk_style_from_table(ctx, table);
+    } else if (theme == NK_THEME_RED) {
+        table[NK_COLOR_TEXT] = nk_rgba(190, 190, 190, 255);
+        table[NK_COLOR_WINDOW] = nk_rgba(30, 33, 40, 215);
+        table[NK_COLOR_HEADER] = nk_rgba(181, 45, 69, 220);
+        table[NK_COLOR_BORDER] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_BUTTON] = nk_rgba(181, 45, 69, 255);
+        table[NK_COLOR_BUTTON_HOVER] = nk_rgba(190, 50, 70, 255);
+        table[NK_COLOR_BUTTON_ACTIVE] = nk_rgba(195, 55, 75, 255);
+        table[NK_COLOR_TOGGLE] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_TOGGLE_HOVER] = nk_rgba(45, 60, 60, 255);
+        table[NK_COLOR_TOGGLE_CURSOR] = nk_rgba(181, 45, 69, 255);
+        table[NK_COLOR_SELECT] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_SELECT_ACTIVE] = nk_rgba(181, 45, 69, 255);
+        table[NK_COLOR_SLIDER] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_SLIDER_CURSOR] = nk_rgba(181, 45, 69, 255);
+        table[NK_COLOR_SLIDER_CURSOR_HOVER] = nk_rgba(186, 50, 74, 255);
+        table[NK_COLOR_SLIDER_CURSOR_ACTIVE] = nk_rgba(191, 55, 79, 255);
+        table[NK_COLOR_PROPERTY] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_EDIT] = nk_rgba(51, 55, 67, 225);
+        table[NK_COLOR_EDIT_CURSOR] = nk_rgba(190, 190, 190, 255);
+        table[NK_COLOR_COMBO] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_CHART] = nk_rgba(51, 55, 67, 255);
+        table[NK_COLOR_CHART_COLOR] = nk_rgba(170, 40, 60, 255);
+        table[NK_COLOR_CHART_COLOR_HIGHLIGHT] = nk_rgba(255, 0, 0, 255);
+        table[NK_COLOR_SCROLLBAR] = nk_rgba(30, 33, 40, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR] = nk_rgba(64, 84, 95, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_HOVER] = nk_rgba(70, 90, 100, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_ACTIVE] = nk_rgba(75, 95, 105, 255);
+        table[NK_COLOR_TAB_HEADER] = nk_rgba(181, 45, 69, 220);
+        nk_style_from_table(ctx, table);
+    } else if (theme == NK_THEME_BLUE) {
+        table[NK_COLOR_TEXT] = nk_rgba(20, 20, 20, 255);
+        table[NK_COLOR_WINDOW] = nk_rgba(202, 212, 214, 215);
+        table[NK_COLOR_HEADER] = nk_rgba(137, 182, 224, 220);
+        table[NK_COLOR_BORDER] = nk_rgba(140, 159, 173, 255);
+        table[NK_COLOR_BUTTON] = nk_rgba(137, 182, 224, 255);
+        table[NK_COLOR_BUTTON_HOVER] = nk_rgba(142, 187, 229, 255);
+        table[NK_COLOR_BUTTON_ACTIVE] = nk_rgba(147, 192, 234, 255);
+        table[NK_COLOR_TOGGLE] = nk_rgba(177, 210, 210, 255);
+        table[NK_COLOR_TOGGLE_HOVER] = nk_rgba(182, 215, 215, 255);
+        table[NK_COLOR_TOGGLE_CURSOR] = nk_rgba(137, 182, 224, 255);
+        table[NK_COLOR_SELECT] = nk_rgba(177, 210, 210, 255);
+        table[NK_COLOR_SELECT_ACTIVE] = nk_rgba(137, 182, 224, 255);
+        table[NK_COLOR_SLIDER] = nk_rgba(177, 210, 210, 255);
+        table[NK_COLOR_SLIDER_CURSOR] = nk_rgba(137, 182, 224, 245);
+        table[NK_COLOR_SLIDER_CURSOR_HOVER] = nk_rgba(142, 188, 229, 255);
+        table[NK_COLOR_SLIDER_CURSOR_ACTIVE] = nk_rgba(147, 193, 234, 255);
+        table[NK_COLOR_PROPERTY] = nk_rgba(210, 210, 210, 255);
+        table[NK_COLOR_EDIT] = nk_rgba(210, 210, 210, 225);
+        table[NK_COLOR_EDIT_CURSOR] = nk_rgba(20, 20, 20, 255);
+        table[NK_COLOR_COMBO] = nk_rgba(210, 210, 210, 255);
+        table[NK_COLOR_CHART] = nk_rgba(210, 210, 210, 255);
+        table[NK_COLOR_CHART_COLOR] = nk_rgba(137, 182, 224, 255);
+        table[NK_COLOR_CHART_COLOR_HIGHLIGHT] = nk_rgba(255, 0, 0, 255);
+        table[NK_COLOR_SCROLLBAR] = nk_rgba(190, 200, 200, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR] = nk_rgba(64, 84, 95, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_HOVER] = nk_rgba(70, 90, 100, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_ACTIVE] = nk_rgba(75, 95, 105, 255);
+        table[NK_COLOR_TAB_HEADER] = nk_rgba(156, 193, 220, 255);
+        nk_style_from_table(ctx, table);
+    } else if (theme == NK_THEME_DARK) {
+        table[NK_COLOR_TEXT] = nk_rgba(210, 210, 210, 255);
+        table[NK_COLOR_WINDOW] = nk_rgba(57, 67, 71, 215);
+        table[NK_COLOR_HEADER] = nk_rgba(51, 51, 56, 220);
+        table[NK_COLOR_BORDER] = nk_rgba(46, 46, 46, 255);
+        table[NK_COLOR_BUTTON] = nk_rgba(48, 83, 111, 255);
+        table[NK_COLOR_BUTTON_HOVER] = nk_rgba(58, 93, 121, 255);
+        table[NK_COLOR_BUTTON_ACTIVE] = nk_rgba(63, 98, 126, 255);
+        table[NK_COLOR_TOGGLE] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_TOGGLE_HOVER] = nk_rgba(45, 53, 56, 255);
+        table[NK_COLOR_TOGGLE_CURSOR] = nk_rgba(48, 83, 111, 255);
+        table[NK_COLOR_SELECT] = nk_rgba(57, 67, 61, 255);
+        table[NK_COLOR_SELECT_ACTIVE] = nk_rgba(48, 83, 111, 255);
+        table[NK_COLOR_SLIDER] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_SLIDER_CURSOR] = nk_rgba(48, 83, 111, 245);
+        table[NK_COLOR_SLIDER_CURSOR_HOVER] = nk_rgba(53, 88, 116, 255);
+        table[NK_COLOR_SLIDER_CURSOR_ACTIVE] = nk_rgba(58, 93, 121, 255);
+        table[NK_COLOR_PROPERTY] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_EDIT] = nk_rgba(50, 58, 61, 225);
+        table[NK_COLOR_EDIT_CURSOR] = nk_rgba(210, 210, 210, 255);
+        table[NK_COLOR_COMBO] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_CHART] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_CHART_COLOR] = nk_rgba(48, 83, 111, 255);
+        table[NK_COLOR_CHART_COLOR_HIGHLIGHT] = nk_rgba(255, 0, 0, 255);
+        table[NK_COLOR_SCROLLBAR] = nk_rgba(50, 58, 61, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR] = nk_rgba(48, 83, 111, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_HOVER] = nk_rgba(53, 88, 116, 255);
+        table[NK_COLOR_SCROLLBAR_CURSOR_ACTIVE] = nk_rgba(58, 93, 121, 255);
+        table[NK_COLOR_TAB_HEADER] = nk_rgba(48, 83, 111, 255);
+        nk_style_from_table(ctx, table);
+    } else {
+        nk_style_default(ctx);
+    }
 }

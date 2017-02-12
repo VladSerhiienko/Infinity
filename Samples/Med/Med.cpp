@@ -176,6 +176,7 @@ namespace app
     GLuint vao_0x19;
     GLuint vao_0x1A;
     GLuint vao_0x1C;
+    nk_context * ctx;
 
     enum
     {
@@ -342,7 +343,8 @@ namespace app
 
         gfx::gpu_timer_init(&gpuTimer);
 
-       	//if (!imguiRenderNVGInit("DroidSans.ttf"))
+        ctx = nk_fwk_init(fwk::window);
+        //if (!imguiRenderNVGInit("DroidSans.ttf"))
             //assert(0);
     }
 
@@ -353,6 +355,7 @@ namespace app
         if (files)
             PHYSFS_freeList(files);
 
+        nk_fwk_shutdown();
         //imguiRenderNVGDestroy();
 
         glDeleteBuffers(1, &staticBuffer);
@@ -430,9 +433,34 @@ namespace app
 
         {
             PROFILER_CPU_TIMESLICE("imguiRenderGLDraw");
-            nvgBeginFrame(vg::ctx, gfx::width, gfx::height, 1.0f);
+
+            if (nk_begin(ctx,
+                    "FBXV: Nuklear demo.",
+                    nk_rect(50, 50, 200, 200),
+                    NK_WINDOW_BORDER | NK_WINDOW_MOVABLE | NK_WINDOW_SCALABLE | NK_WINDOW_CLOSABLE | NK_WINDOW_MINIMIZABLE | NK_WINDOW_TITLE)) {
+                enum { EASY,
+                    HARD };
+                static int op = EASY;
+                static int property = 20;
+
+                nk_layout_row_static(ctx, 30, 80, 1);
+                if (nk_button_label(ctx, "button"))
+                    fprintf(stdout, "button pressed\n");
+                nk_layout_row_dynamic(ctx, 30, 2);
+
+                if (nk_option_label(ctx, "easy", op == EASY))
+                    op = EASY;
+                if (nk_option_label(ctx, "hard", op == HARD))
+                    op = HARD;
+                nk_layout_row_dynamic(ctx, 25, 1);
+                nk_property_int(ctx, "Compression:", 0, &property, 100, 10, 1);
+                nk_end(ctx);
+            }
+
+            nk_fwk_render(nk_anti_aliasing::NK_ANTI_ALIASING_ON);
+            //nvgBeginFrame(vg::ctx, gfx::width, gfx::height, 1.0f);
             //imguiRenderNVGDraw();
-            nvgEndFrame(vg::ctx);
+            //nvgEndFrame(vg::ctx);
         }
 
         cpu_timer_stop(&cpuTimer);
